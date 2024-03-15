@@ -10,6 +10,9 @@ import check_laser_delay_ui
 import pandas as pd
 import numpy as np
 import pyqtgraph as pg
+import nidaqmx
+from nidaqmx.constants import *
+from nidaqmx.stream_readers import CounterReader
 from threading import Thread, active_count
 from ctypes import *
 #import JSON-RPC Pulse Streamer wrapper class, to use Google-RPC import from pulsestreamer.grpc
@@ -24,23 +27,66 @@ class ConfigureChannels():
     def __init__(self):
         super().__init__()
         self._pulser_channels = {
-            'ch_aom': 0, # output channel 0
-            'ch_switch': 1, # output channel 1
-            'ch_tagger': 2, # output channel 2
-            'ch_sync': 3 # output channel 3
+            'ch_aom': 0, # output channel 0: AOM control
+            'ch_switch': 1, # output channel 1: MW switch control
+            'ch_tagger': 2, # output channel 2 
+            'ch_sync': 3, # output channel 3
+            'ch_daq': 4, # NI gate channel
+            'ch_mw_source': 5 # N5181A frequency change channel
         }
         self._timetagger_channels = {
             'click_channel': 1,
             'start_channel':2,
             'next_channel':-2,
-            'sync_channel':tt.CHANNEL_UNUSED,
-        }    
+            # 'sync_channel':tt.CHANNEL_UNUSED,
+        }   
+        self._ni_6363_channels = {
+            'apd_channel':'/Dev2/PFI0',
+            'clock_channel':'/Dev2/PFI1',
+            'odmr_ctr_channel':'/Dev2/ctr0'
+        } 
     @property
     def pulser_channels(self):
         return self._pulser_channels
     @property
     def timetagger_channels(self):
         return self._timetagger_channels
+    @property
+    def ni_6363_channels(self):
+        return self._ni_6363_channels
+    
+class Hardware():
+    def __init__(self):
+        super().__init__()
+
+    def pulser_generate(self):
+        devices = findPulseStreamers()
+        # print(devices)
+        # DHCP is activated in factory settings
+        if devices !=[]:
+            ip = devices[0][0]
+        else:
+            # if discovery failed try to connect by the default hostname
+            # IP address of the pulse streamer (default hostname is 'pulsestreamer')
+            print("No Pulse Streamer found")
+
+        #connect to the pulse streamer
+        pulser = PulseStreamer(ip)
+
+        # Print serial number and FPGA-ID
+
+        return pulser
+    def daq_task_generate(self, apd_channel, odmr_ctr_channel, **kwargs):
+        task = nidaqmx.Task()
+        channel = task.ci_channels.add_ci_count_edges_chan(
+            counter=odmr_ctr_channel,
+            edge=Edge.RISING,
+            count_direction=CountDirection.COUNT_UP
+        )
+        channel.ci_count_edges_term = apd_channel
+        channel.ci_count_edges_active_edge = Edge.RISING
+        
+        return task, channel
     
 class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
 
@@ -86,12 +132,12 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
         # Init RF signal
         self.my_rf_signal()
         '''
-        Confugure channels
+        Configure channels
         '''
         channel_config = ConfigureChannels()
         pulser_channels = channel_config.pulser_channels
-        timetagger_channels = channel_config.timetagger_channels
-        self._channels = {**pulser_channels, **timetagger_channels}
+        daq_channels = channel_config.ni_6363_channels
+        self._channels = {**pulser_channels, **daq_channels}
 
         # print(self._channels)
         '''
@@ -421,25 +467,22 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
 
         self.seq.plot()
     
-    def pulsestreamer_on_activate(self):
-        devices = findPulseStreamers()
-        # DHCP is activated in factory settings
-        if devices !=[]:
-            ip = devices[0][0]
-        else:
-            # if discovery failed try to connect by the default hostname
-            # IP address of the pulse streamer (default hostname is 'pulsestreamer')
-            self.pulse_streamer_info_msg.emit("No Pulse Streamer found")
+    def pulser_daq_on_activate(self):
+        '''
+        Pusler Init
+        '''
+        self.pulser = self.hardware.pulser_generate()
+        '''
+        DAQ Init
+        '''
+        self.task, self.odmr_ctr_channel = self.hardware.daq_task_generate(**self._channels)
+        self.pulse_streamer_info_msg.emit('DAQ Counter channel: '+self.odmr_ctr_channel.channel_names[0])
+        self.pulse_streamer_info_msg.emit('DAQ APD channel: '+self.odmr_ctr_channel.ci_count_edges_term)
 
-        #connect to the pulse streamer
-        self.pulser = PulseStreamer(ip)
-
-        # Print serial number and FPGA-ID
-        self.pulse_streamer_info_msg.emit('Serial: ' + self.pulser.getSerial())
-        self.pulse_streamer_info_msg.emit('FPGA ID: ' + self.pulser.getFPGAID())
-
-    def pulsestreamer_on_deactivate(self):
+    def pulser_daq_on_deactivate(self):
         self.pulser.reset()
+        self.task.stop()
+        self.task.close()
     def pulse_streamer_info_ui(self):
 
         self.pulse_streamer_msg.setWordWrap(True)  # 自动换行
