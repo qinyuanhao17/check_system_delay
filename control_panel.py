@@ -2,6 +2,7 @@ import sys
 import os
 import time
 import gc
+import socket
 from PyQt5 import QtGui
 from pympler import asizeof
 import pythoncom
@@ -569,7 +570,7 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
         self._gpib_connection.close()  
         self.rm.close()
         self.pulser_daq_on_deactivate()
-
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM).close()
         return
 if __name__ == '__main__':
 
