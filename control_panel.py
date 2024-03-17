@@ -93,7 +93,7 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
     rf_info_msg = pyqtSignal(str)
     pulse_streamer_info_msg = pyqtSignal(str)
     data_processing_info_msg = pyqtSignal(str)
-    tcspc_data_signal = pyqtSignal(np.ndarray, np.ndarray, np.ndarray, np.ndarray)
+    odmr_data_info_msg = pyqtSignal(list)
 
 
     def __init__(self):
@@ -152,6 +152,7 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
         '''
         Data processing init
         '''
+        self._data_container = []
         self.plot_ui_init()
         self.data_processing_signal()
         self.data_processing_info_ui()
@@ -160,7 +161,7 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
 
         # Message signal
         self.data_processing_info_msg.connect(self.data_processing_slot)
-        self.tcspc_data_signal.connect(self.plot_result)
+        self.odmr_data_info_msg.connect(self.plot_result)
         # Scroll area updating signal
         self.data_processing_scroll.verticalScrollBar().rangeChanged.connect(
             lambda: self.data_processing_scroll.verticalScrollBar().setValue(
@@ -168,79 +169,24 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
             )
         )
         # plot signal
-        self.repeat_cycle_spbx.valueChanged.connect(self.process_plot_data)
-        self.repeat_cycle_spbx.valueChanged.connect(self.rabi_cycling)
         self.save_plot_data_btn.clicked.connect(self.save_plot_data)
-        # self.hist_num_cbx.currentTextChanged.connect(self.process_plot_data)
 
         # infinite line signal
-        self.signal_start_spbx.editingFinished.connect(self.reset_infinite_line_pos)
-        self.signal_span_spbx.editingFinished.connect(self.reset_infinite_line_pos)
-        self.ref_start_spbx.editingFinished.connect(self.reset_infinite_line_pos)
-        self.ref_span_spbx.editingFinished.connect(self.reset_infinite_line_pos)
+        self.data_infinite_line.sigPositionChangeFinished.connect(self.reset_infinite_line_spbx_value)
 
-        self.data_start.sigPositionChangeFinished.connect(self.reset_infinite_line_spbx_value)
-        self.data_stop.sigPositionChangeFinished.connect(self.reset_infinite_line_spbx_value)
-        self.ref_start.sigPositionChangeFinished.connect(self.reset_infinite_line_spbx_value)
-        self.ref_stop.sigPositionChangeFinished.connect(self.reset_infinite_line_spbx_value)
     def save_plot_data(self):
         
         pass
-    
-    def process_plot_data(self):
-        if hasattr(self, '_tcspc_data_container') and int(self.repeat_cycle_spbx.value()):
-            
-            dataType = self.hist_num_cbx.currentText()
-            rabi_dataType = self.rabi_data_type_cbx.currentText()
-            thread = Thread(
-                target= self.process_plot_data_thread,
-                args=(dataType, rabi_dataType),
-            )
-            thread.start()
-    
-    def rabi_plot_data_thread(self, dataType):
-        pass
-
-    def generate_rabi_data(self, data, dataType):
-        binwidth = int(self.bin_width_cbx.currentText())
-        signal_start_pos = round(self.data_start.value()/binwidth)
-        signal_stop_pos = round(self.data_stop.value()/binwidth)
-        ref_start_pos = round(self.ref_start.value()/binwidth)
-        ref_stop_pos = round(self.ref_stop.value()/binwidth)
-        repeat_count = int(self.repeat_cycle_spbx.value())
-        # print(signal_start_pos)
-        # print(signal_stop_pos)
-        # print(len(self._tcspc_index))
-        # print(self._tcspc_index[signal_stop_pos])
-        rabi_dict = {
-            'sum': lambda x: np.sum(x[:,signal_start_pos:signal_stop_pos],axis=1),
-            'mean': lambda x: np.sum(x[:,signal_start_pos:signal_stop_pos],axis=1)/repeat_count,
-            'mean_norm': lambda x: np.sum(x[:,signal_start_pos:signal_stop_pos],axis=1)/np.sum(x[:,ref_start_pos:ref_stop_pos],axis=1),
-            'reference': lambda x: np.sum(x[:,signal_start_pos:signal_stop_pos],axis=1)-np.sum(x[:,ref_start_pos:ref_stop_pos],axis=1)
-        }
-        return rabi_dict[dataType](data)
-    def process_plot_data_thread(self, dataType, rabi_dataType):
-        tcspc_data = self._tcspc_data_container[1:]
-        start, stop, step, numpoints = self.start_stop_step()
-        rabi_index = np.arange(start,stop+step,step)
-        assert len(rabi_index)==numpoints,'Rabi index number error!'
-        rabi_intensity = self.generate_rabi_data(data=tcspc_data, dataType=rabi_dataType)
         
-        if dataType == 'SUM':
-            self.tcspc_data_signal.emit(self._tcspc_index/1000, np.sum(tcspc_data, axis=0), rabi_index, rabi_intensity)
-
-        else:
-            self.tcspc_data_signal.emit(self._tcspc_index/1000, tcspc_data[int(dataType)-1], rabi_index, rabi_intensity)
-        
-    def plot_result(self, tcspc_x, tcspc_y, rabi_index, rabi_intensity):
-
-        '''Plot tcspc data'''    
-        # start_time = time.time() 
-        self.tcspc_curve.setData(tcspc_x, tcspc_y)
-        self.rabi_curve.setData(rabi_index, rabi_intensity)
-
-        # end_time = time.time()
-        # print(f'plot time: {end_time-start_time}') 
+    def plot_result(self, data):
+        daq_step = self._pulse_configuration['daq_step']
+        n_sample = self._pulse_configuration['n_sample']
+        time_data = np.arange(0,n_sample)*daq_step
+        data_array = np.array(data)
+        contrast_data = np.sum(data_array, axis=0,dtype=np.uint32)
+        print(len(time_data))
+        print(len(contrast_data))
+        self.rabi_curve.setData(time_data, contrast_data)   
                      
     def data_processing_info_ui(self):
 
@@ -293,53 +239,18 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
         plot.showGrid(x=False, y=True)
         curve = plot.plot(pen=pg.mkPen(color=(255,85,48), width=2))        
         if infiniteLine == True:
-            signal_start_pos = int(self.signal_start_spbx.value())
-            signal_span = int(self.signal_span_spbx.value())
-            ref_start_pos = int(self.ref_start_spbx.value())
-            ref_span = int(self.ref_span_spbx.value())
-            signal_stop_pos = signal_start_pos + signal_span
-            ref_stop_pos = ref_start_pos + ref_span
-
+            mw_start = int(self.mw_start_spbx.value())
             data_pen = pg.mkPen(color='b', width=1)
-            ref_pen = pg.mkPen(color='g', width=1)
-
-            self.data_start = self.generate_infinite_line(pen=data_pen,pos=signal_start_pos,label='start')
-            self.data_stop = self.generate_infinite_line(pen=data_pen,pos=signal_stop_pos,label='stop')
-            self.ref_start = self.generate_infinite_line(pen=ref_pen,pos=ref_start_pos,label='start')
-            self.ref_stop = self.generate_infinite_line(pen=ref_pen,pos=ref_stop_pos,label='stop')
-            plot.addItem(self.data_start)
-            plot.addItem(self.data_stop)
-            plot.addItem(self.ref_start)
-            plot.addItem(self.ref_stop)
-
+            self.data_infinite_line = self.generate_infinite_line(pen=data_pen,pos=mw_start,label='pos')
+            plot.addItem(self.data_infinite_line)
         return curve
     def reset_infinite_line_spbx_value(self):
-        signal_start_pos = round(self.data_start.value())
-        signal_stop_pos = round(self.data_stop.value())
-        ref_start_pos = round(self.ref_start.value())
-        ref_stop_pos = round(self.ref_stop.value())
 
-        signal_span = signal_stop_pos - signal_start_pos
-        ref_span = ref_stop_pos - ref_start_pos
-        
-        if signal_span > 0 and ref_span > 0:
-            self.signal_start_spbx.setValue(signal_start_pos)
-            self.signal_span_spbx.setValue(signal_span)
-            self.ref_start_spbx.setValue(ref_start_pos)
-            self.ref_span_spbx.setValue(ref_span)
-    def reset_infinite_line_pos(self):
-        signal_start_pos = int(self.signal_start_spbx.value())
-        signal_span = int(self.signal_span_spbx.value())
-        ref_start_pos = int(self.ref_start_spbx.value())
-        ref_span = int(self.ref_span_spbx.value())
-        signal_stop_pos = signal_start_pos + signal_span
-        ref_stop_pos = ref_start_pos + ref_span
-        self.data_start.setValue(signal_start_pos)
-        self.data_stop.setValue(signal_stop_pos)
-        self.ref_start.setValue(ref_start_pos)
-        self.ref_stop.setValue(ref_stop_pos)
+        data_pos = round(self.data_infinite_line.value())
+        self.data_position_spbx.setValue(data_pos)
+
     def plot_ui_init(self):
-        self.tcspc_curve = self.create_plot_widget(
+        self.rabi_curve = self.create_plot_widget(
             xlabel='Time bins (ns)',
             ylabel='Counts(a.u.)',
             title='Check Delay',
@@ -361,78 +272,59 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
         self.rabi_stop_btn.clicked.connect(self.rabi_stop)
     def rabi_stop(self):
 
-        self.pulsed.stop()
-        self.pulsed.clear()
         self.pulser.reset()
  
         self._stopConstant = True
         gc.collect()
         
     def rabi_start(self):
-        self.repeat_cycle_spbx.setValue(0)
-        print('start clicked')
-        '''
-        Reset pulser and tagger
-        '''
-        self.pulsed.stop()
-        self.pulsed.clear()
+
         self.pulser.reset()
-        '''
-        Init a tcspc data container
-        '''
-        self._tcspc_data_container = np.array([])
-        self._tcspc_index = np.array([])
-        '''
-        Start Rabi
-        '''
+        self.task.start()
+        self._data_container = []
         self._stopConstant = False
-        
-        self.pulsed.start()
-        self.pulsed.setMaxCounts(self._int_cycles)
         time.sleep(0.5)
         final = OutputState([self._channels['ch_aom']],0,0)
-        self.pulser.stream(self.seq, self._int_cycles+1, final)
-
+        self.pulser.stream(self.seq, -1, final)
+        # Start daq in thread
         thread = Thread(
             target=self.count_data_thread_func
         )
         thread.start()
-    def rabi_cycling(self):
-
-        if self._stopConstant == False and int(self.repeat_cycle_spbx.value()):        
-            self.pulsed.start()
-            self.pulsed.setMaxCounts(self._int_cycles)
-            time.sleep(0.2)
-            final = OutputState([self._channels['ch_aom']],0,0)
-            self.pulser.stream(self.seq, self._int_cycles+1, final)
-
-            thread = Thread(
-                target=self.count_data_thread_func
-            )
-            thread.start()
 
     def count_data_thread_func(self):
-                
+
+        n_sample = self._pulse_configuration['n_sample']
+        number_of_samples = n_sample*2
+        inner_repeat = int(self.inner_repeat_spbx.value())
+        repeat_count = 0
         while True:
-            if self.pulsed.ready():
-                data = self.pulsed.getData()
-                if self._tcspc_data_container.size == 0:
-                    self._tcspc_data_container = data
-                else:
-                    self._tcspc_data_container += data
-                del data
-                gc.collect()
-                self._tcspc_index = self.pulsed.getIndex()                
+
+            data_array = np.zeros(number_of_samples,dtype=np.uint32)
+            self.reader.read_many_sample_uint32(
+                data=data_array,
+                number_of_samples_per_channel=number_of_samples,
+                timeout=10
+            )
+            gate_in = data_array[0::2]
+            gate_out = data_array[1::2]
+            counts = gate_out - gate_in
+
+            # contrast = signal
+            self._data_container.append(counts)
+            print(len(self._data_container))
+            if len(self._data_container) and ((len(self._data_container) // inner_repeat) != repeat_count):
+                repeat_count += 1
+                self.repeat_spbx.setValue(repeat_count)
+                self.odmr_data_info_msg.emit(self._data_container)
+                # del data_array, gate_in, gate_out, counts
+                # gc.collect()
+
+            if self._stopConstant == True:
+                self.pulser.reset()
+                self.task.stop()
                 break
-            time.sleep(0.5)
-        self.pulsed.stop()
-        self.pulsed.clear()
-        self.pulser.reset()
-        repeat_cycle = int(self.repeat_cycle_spbx.value())
-        self.repeat_cycle_spbx.setValue(repeat_cycle+1)
-       
-    def set_pulse_and_count(self, ch_aom, ch_switch, ch_daq, **kwargs):
-        # print(ch_aom, ch_switch, ch_daq, ch_mw_source)
+    def configure_pulse(self):
         mw_start = int(self.mw_start_spbx.value()) # in ns
         mw_gate = int(self.mw_gate_spbx.value()) # in ns
         laser_start = int(self.laser_start_spbx.value()) # in ns
@@ -440,7 +332,29 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
         daq_high = 100 # in ns
         daq_gate = int(self.daq_gate_spbx.value())
         daq_step = int(self.daq_step_spbx.value())
-        n_sample = int((laser_gate + 2*laser_start - daq_high - daq_gate)/10 + 1)
+        n_sample = int((laser_gate + 2*laser_start - daq_high - daq_gate)/10 + 1) 
+        return {
+            'mw_start':mw_start,
+            'mw_gate':mw_gate,
+            'laser_start':laser_start,
+            'laser_gate':laser_gate,
+            'daq_high':daq_high,
+            'daq_gate':daq_gate,
+            'daq_step':daq_step,
+            'n_sample':n_sample
+        }
+    def set_pulse_and_count(self, ch_aom, ch_switch, ch_daq, **kwargs):
+        # print(ch_aom, ch_switch, ch_daq, ch_mw_source)
+        self._pulse_configuration = self.configure_pulse()
+
+        mw_start = self._pulse_configuration['mw_start']
+        mw_gate = self._pulse_configuration['mw_gate']
+        laser_start = self._pulse_configuration['laser_start']
+        laser_gate = self._pulse_configuration['laser_gate']
+        daq_high = self._pulse_configuration['daq_high']
+        daq_gate = self._pulse_configuration['daq_gate']
+        daq_step = self._pulse_configuration['daq_step']
+        n_sample = self._pulse_configuration['n_sample']
  
         #define digital levels
         HIGH=1
@@ -654,8 +568,8 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
         self._gpib_connection.write(':OUTPut:STATe OFF')
         self._gpib_connection.close()  
         self.rm.close()
-        self.pulsestreamer_on_deactivate()
-        self.timetagger_on_deactivate()
+        self.pulser_daq_on_deactivate()
+
         return
 if __name__ == '__main__':
 
