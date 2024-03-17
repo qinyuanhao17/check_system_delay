@@ -143,15 +143,12 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
         '''
         PULSER init
         '''
-        
+        self.hardware = Hardware()
         self.pulse_streamer_singal_init()
         self.pulse_streamer_info_ui()
         self.pulse_streamer_info_msg.connect(self.pulse_streamer_slot)
-        self.pulsestreamer_on_activate()
-        '''
-        TimeTagger init
-        '''
-        self.timetagger_on_activate()
+        self.pulser_daq_on_activate()
+        
         '''
         Data processing init
         '''
@@ -434,27 +431,26 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
         repeat_cycle = int(self.repeat_cycle_spbx.value())
         self.repeat_cycle_spbx.setValue(repeat_cycle+1)
        
-    def set_pulse_and_count(self, ch_aom, ch_switch, ch_tagger, ch_sync):
-
-
-        laser_time = int(self.laser_time_spbx.value())*1000 # in ns
-        laser_delay = int(self.laser_delay_spbx.value())
-        wait_time = int(self.wait_time_spbx.value())
-
+    def set_pulse_and_count(self, ch_aom, ch_switch, ch_daq, **kwargs):
+        # print(ch_aom, ch_switch, ch_daq, ch_mw_source)
+        mw_start = int(self.mw_start_spbx.value()) # in ns
+        mw_gate = int(self.mw_gate_spbx.value()) # in ns
+        laser_start = int(self.laser_start_spbx.value()) # in ns
+        laser_gate = int(self.laser_gate_spbx.value())*1000 # in ns
+        daq_high = 100 # in ns
+        daq_gate = int(self.daq_gate_spbx.value())
+        daq_step = int(self.daq_step_spbx.value())
+        n_sample = int((laser_gate + 2*laser_start - daq_high - daq_gate)/10 + 1)
+ 
         #define digital levels
         HIGH=1
         LOW=0
-        seq_aom=[]
-        seq_switch=[]
-        seq_tagger=[]
-        seq_gate=[]
-        #define pulse patterns for each channels
-        # simply add more pulses with ', (time, HIGH/LOW)'
-        for mw_time in mw_times:
-            seq_aom += [(laser_time, HIGH), (wait_time, LOW), (mw_time,LOW)]
-            seq_switch += [(laser_time, LOW), (wait_time, LOW), (mw_time, HIGH)]
-            seq_tagger += [(laser_time, HIGH), (wait_time, LOW), (mw_time,LOW)]
-            seq_gate += [(laser_time+laser_delay, HIGH), (wait_time-laser_delay, LOW), (mw_time,LOW)]
+
+        seq_daq = []
+        seq_aom=[(laser_start,LOW),(laser_gate,HIGH),(laser_start,LOW)]*n_sample
+        seq_switch=[(mw_start,LOW),(mw_gate,HIGH),(laser_start*2+laser_gate-mw_start-mw_gate,LOW)]*n_sample
+        for i in range(n_sample):
+            seq_daq += [(i*daq_step,LOW),(daq_high,HIGH),(daq_gate-daq_high,LOW),(daq_high,HIGH),(laser_start*2+laser_gate-i*daq_step-daq_high-daq_gate,LOW)]
         
         #create the sequence
         self.seq = Sequence()
@@ -462,10 +458,19 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
         #set digital channels
         self.seq.setDigital(ch_aom, seq_aom)
         self.seq.setDigital(ch_switch, seq_switch)
-        self.seq.setDigital(ch_tagger, seq_tagger)
-        self.seq.setDigital(ch_sync, seq_gate)
+        self.seq.setDigital(ch_daq, seq_daq)
 
         self.seq.plot()
+        self.task.timing.cfg_samp_clk_timing(
+            rate=2E6,
+            source='/Dev2/PFI1',
+            active_edge=Edge.RISING,
+            sample_mode=AcquisitionType.CONTINUOUS,
+            samps_per_chan=2*n_sample
+        )
+        self.pulse_streamer_info_msg.emit('Counter input channel: '+self.odmr_ctr_channel.ci_count_edges_term)
+        
+        self.reader = CounterReader(self.task.in_stream)
     
     def pulser_daq_on_activate(self):
         '''
