@@ -333,7 +333,8 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
         daq_high = 100 # in ns
         daq_gate = int(self.daq_gate_spbx.value())
         daq_step = int(self.daq_step_spbx.value())
-        n_sample = int((laser_gate + 2*laser_start - daq_high - daq_gate)/10 + 1) 
+        # n_sample = int((laser_gate + 2*laser_start - daq_high - daq_gate)/daq_step + 1) 
+        n_sample = int(self.n_sample_spbx.value())
         return {
             'mw_start':mw_start,
             'mw_gate':mw_gate,
@@ -361,7 +362,7 @@ class MyWindow(check_laser_delay_ui.Ui_Form, QWidget):
         HIGH=1
         LOW=0
 
-        seq_daq = []
+        seq_daq = [(100, LOW)]
         seq_aom=[(laser_start,LOW),(laser_gate,HIGH),(laser_start,LOW)]*n_sample
         seq_switch=[(mw_start,LOW),(mw_gate,HIGH),(laser_start*2+laser_gate-mw_start-mw_gate,LOW)]*n_sample
         for i in range(n_sample):
